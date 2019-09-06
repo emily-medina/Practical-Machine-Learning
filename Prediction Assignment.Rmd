@@ -1,0 +1,114 @@
+---
+title: "Prediction Assignment Writeup"
+author: "Emily"
+date: "9/6/2019"
+output: html_document
+---
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+##Prediction Assignment Writeup
+I am first going to set the set, then load necessary packages and data.
+
+```{r, include=T, echo=T,results=F, message=F}
+set.seed(123)
+require(data.table);require(ggplot2);require(caret);require(randomForest)
+pmltrain <- read.csv("pml-training.csv")
+pmltest <- read.csv("pml-testing.csv")
+```
+
+Then I explore the data to see how to make my models. I cross-compare the test and training datasets so I can see similarities and difference. I then plot the classe variable to for exploratory purposes.
+
+```{r }
+length(intersect(colnames(pmltrain),colnames(pmltest)))
+barplot(table(pmltrain$classe))
+splom(classe~pmltrain[1:5], data = pmltrain)
+```
+
+There are 159 common variables (classe is not one). I see if there are an null values that need to be accounted for. I then remove the nulls and make training and test sets from the pmltrain data with classe as the target variable. Next I control the classe balance and check if any nulls are generated due to the splitting. This is not a problem.
+
+
+```{r}
+test_na <-sapply(pmltest, FUN=function(x){
+  length(which(is.na(x)))})
+length(names(test_na[test_na==20]))
+intrain <- createDataPartition(pmltrain$classe, p = 0.7, list=F)
+training <- pmltrain[intrain,!names(pmltrain) %in% names(test_na[test_na>0])]
+testing <- pmltrain[-intrain,!names(pmltrain) %in% names(test_na[test_na>0])]
+prop.table(table(training$classe))
+prop.table(table(testing$classe))
+table(sapply(training, function(x){
+  all(is.na(x))
+}))
+table(sapply(testing, function(x){
+  all(is.na(x))
+}))
+```
+
+Next, I test the data and it fits very well!! I will double check this. Variable X predicts classe.
+```{r, warning=F}
+fitlda <- train(classe~., method="lda", data = training)
+confusionMatrix(fitlda)
+lda_varimp <- varImp(fitlda)
+head(lda_varimp$importance, 5)
+qplot(X, magnet_forearm_z, colour=classe, data = training)
+```
+
+The plot confirms this, I then remove from test and train sets.
+```{r}
+cases <- pmltest$X
+pmltrain$X <- NULL
+pmltest$X <- NULL
+training$X <- NULL
+testing$X <- NULL
+```
+##Model Fit
+I complete a 10 fold cross validation and evaluate for variablility and accuracy. Next I fit three models and compare. I use linear discim analysis, gradient boosting, and a decision tree. Once, these are modeled I see how they perform as far as cross validation accuracy and variability.
+
+```{r, warning=F, message=F}
+fitcontrol <- trainControl(method="cv", number=10)
+
+fitlda <- train(classe~., method="lda", data = training, trControl=fitcontrol)
+fitgbm <- train(classe~., method="gbm", data = training, verbose=F, trControl=fitcontrol)
+fittree <- train(classe~., method="rpart", data = training, trControl=fitcontrol)
+
+
+print("LDA mean and sd")
+mean(fitlda$resample$Accuracy)
+sd(fitlda$resample$Accuracy)
+print("GBM mean and sd")
+mean(fitgbm$resample$Accuracy)
+sd(fitgbm$resample$Accuracy)
+print("decision tree mean and sd",mean(fittree$resample$Accuracy))
+mean(fittree$resample$Accuracy)
+sd(fittree$resample$Accuracy)
+```
+These models tell me that the decsion tree is the worst performing (has the highest standard deviation). The LDA model shows a pretty good model for the data, however after examining the GBM model I can see this is the best with the highest mean accuracy and a lower SD. Then I check out the sample errors for the models.
+
+```{r, warning=F, message=F}
+1-mean(fittree$resample$Accuracy)
+1-mean(fitlda$resample$Accuracy)
+1-mean(fitgbm$resample$Accuracy)
+
+predlda <- predict(fitlda, testing)
+predgbm <- predict(fitgbm, testing)
+predtree <- predict(fittree,testing)
+
+confusionMatrix(predlda, testing$classe)$table
+confusionMatrix(predlda, testing$classe)$overall[1]
+confusionMatrix(predgbm, testing$classe)$table
+confusionMatrix(predgbm, testing$classe)$overall[1]
+confusionMatrix(predtree, testing$classe)$table
+confusionMatrix(predtree, testing$classe)$overall[1]
+```
+
+My deductions remain the same are previously. GBM is the best model. I will predict with gbm.
+
+```{r}
+plot(fitgbm)
+print(fitgbm$bestTune)
+
+preds <- predict(fitgbm, pmltest)
+data.frame(cases, preds)
+cat("predict", paste(predict(fitgbm, pmltest)))
+```
